@@ -1,0 +1,582 @@
+import Konva from 'konva';
+import { getContextLayers, insertKeyframe, createShape, createInstance, createPathPoint } from '../core/model.js';
+import { resolveLayersAtFrame } from '../playback/resolve.js';
+import { notify } from '../state.js';
+
+const HANDLE_DRAG_THRESHOLD = 3; // px, avant qu'un clic-glissé plume ne devienne un point lisse
+const CLOSE_PATH_THRESHOLD = 8; // px, distance au premier point pour fermer le tracé au clic
+
+// Trace un chemin (segments droits ou courbes de Bézier) dans un contexte
+// canvas déjà positionné en beginPath(). Partagé par le rendu Konva (scène
+// éditeur) et l'aperçu en direct de l'outil plume — jamais par l'export, qui
+// a sa propre copie autonome dans animateRuntime.js (voir la mémoire projet).
+function tracePath(ctx, points, closed) {
+  if (!points.length) return;
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) traceSegment(ctx, points[i - 1], points[i]);
+  if (closed && points.length > 1) {
+    traceSegment(ctx, points[points.length - 1], points[0]);
+    ctx.closePath();
+  }
+}
+
+function traceSegment(ctx, a, b) {
+  if (!a.cOut && !b.cIn) { ctx.lineTo(b.x, b.y); return; }
+  const c1 = a.cOut ? { x: a.x + a.cOut.x, y: a.y + a.cOut.y } : { x: a.x, y: a.y };
+  const c2 = b.cIn ? { x: b.x + b.cIn.x, y: b.y + b.cIn.y } : { x: b.x, y: b.y };
+  ctx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, b.x, b.y);
+}
+
+function clonePathPoint(p) {
+  return { x: p.x, y: p.y, cIn: p.cIn ? { x: p.cIn.x, y: p.cIn.y } : null, cOut: p.cOut ? { x: p.cOut.x, y: p.cOut.y } : null, smooth: p.smooth };
+}
+
+// Wraps a Konva.Stage and turns it into an Animate-like canvas: it renders
+// the document model at the current frame/edit-context, and implements the
+// drawing/selection tools. All committed edits go through the plain data
+// model (core/model.js) and then call notify(state) to trigger a re-render
+// everywhere (timeline, library, properties panel, ...).
+export function createStage({ container, state, onSelectionChange = () => {} }) {
+  const initialDoc = state.doc;
+
+  const konvaStage = new Konva.Stage({ container, width: initialDoc.width, height: initialDoc.height });
+
+  const bgLayer = new Konva.Layer({ listening: false });
+  const contentLayer = new Konva.Layer();
+  const overlayLayer = new Konva.Layer();
+  konvaStage.add(bgLayer, contentLayer, overlayLayer);
+
+  const bgRect = new Konva.Rect({ x: 0, y: 0, width: initialDoc.width, height: initialDoc.height, fill: initialDoc.backgroundColor });
+  bgLayer.add(bgRect);
+  bgLayer.draw();
+
+  const transformer = new Konva.Transformer({
+    rotateEnabled: true,
+    borderStroke: '#cb4b16',
+    anchorStroke: '#cb4b16',
+    anchorFill: '#ffffff',
+    anchorSize: 8,
+  });
+  const handleGroup = new Konva.Group();
+  overlayLayer.add(transformer, handleGroup);
+
+  let drawState = null;
+  let subselectId = null; // id de l'élément path/line actuellement édité par l'outil sous-sélection
+  let pointRefs = []; // nœuds Konva des ancres/poignées affichées, reconstruits à chaque sélection
+
+  function currentLayers() {
+    return getContextLayers(state.doc, state.editPath);
+  }
+
+  function activeLayer() {
+    const layers = currentLayers();
+    return layers.find((l) => l.id === state.selectedLayerId) || layers[layers.length - 1];
+  }
+
+  function commitToActiveKeyframe(mutator) {
+    const layer = activeLayer();
+    if (!layer || layer.locked) return null;
+    const kf = insertKeyframe(layer, state.currentFrame);
+    mutator(kf, layer);
+    return kf;
+  }
+
+  // ---------------------------------------------------------------- render
+  function buildNode(el) {
+    let node;
+    if (el.kind === 'instance') {
+      node = new Konva.Group({});
+    } else {
+      switch (el.shapeType) {
+        case 'rect':
+          node = new Konva.Rect({ offsetX: el.width / 2, offsetY: el.height / 2, width: el.width, height: el.height, fill: el.fill, stroke: el.stroke, strokeWidth: el.strokeWidth });
+          break;
+        case 'ellipse':
+          node = new Konva.Ellipse({ radiusX: el.width / 2, radiusY: el.height / 2, fill: el.fill, stroke: el.stroke, strokeWidth: el.strokeWidth });
+          break;
+        case 'line':
+        case 'path': {
+          // Clone indépendant : el.points peut aliaser directement le
+          // tableau du modèle (image tenue, sans tween) — l'édition de
+          // points doit pouvoir muter elData librement pendant un drag
+          // sans jamais toucher le modèle avant commitPoints().
+          const elData = { points: el.points.map(clonePathPoint), closed: !!el.closed };
+          node = new Konva.Shape({
+            fill: el.closed ? el.fill : undefined,
+            stroke: el.stroke,
+            strokeWidth: el.strokeWidth,
+            lineCap: 'round',
+            lineJoin: 'round',
+            sceneFunc: (ctx, shape) => {
+              const d = shape.getAttr('elData');
+              ctx.beginPath();
+              tracePath(ctx, d.points, d.closed);
+              ctx.fillStrokeShape(shape);
+            },
+          });
+          node.setAttr('elData', elData);
+          break;
+        }
+        case 'text':
+          node = new Konva.Text({ offsetX: el.width / 2, offsetY: el.height / 2, width: el.width, text: el.text || 'Texte', fontSize: el.fontSize, fontFamily: el.fontFamily, fill: el.fill, align: 'center' });
+          break;
+        default:
+          node = new Konva.Rect({ width: 1, height: 1, fill: 'red' });
+      }
+    }
+    node.setAttrs({ x: el.x, y: el.y, rotation: el.rotation, scaleX: el.scaleX, scaleY: el.scaleY, opacity: el.opacity });
+    node.id(el.id);
+    node.setAttr('elKind', el.kind);
+    node.setAttr('elShapeType', el.shapeType || null);
+    node.setAttr('elLayerId', el.layerId);
+    if (el.kind === 'instance') node.setAttr('symbolId', el.symbolId);
+    return node;
+  }
+
+  // depth 0 = contenu directement éditable dans le contexte courant (scène
+  // racine ou symbole en cours d'édition). En profondeur > 0 (contenu d'une
+  // instance imbriquée), les objets restent visibles mais non interactifs :
+  // il faut double-cliquer pour entrer dans ce symbole et l'éditer lui-même.
+  function renderInto(parent, layers, frameIndex, tick, depth = 0) {
+    const elements = resolveLayersAtFrame(layers, frameIndex);
+    for (const el of elements) {
+      const node = buildNode(el);
+      parent.add(node);
+      if (depth === 0) attachInteraction(node, el);
+      if (el.kind === 'instance') {
+        const symbol = state.doc.symbols[el.symbolId];
+        if (symbol) {
+          const childFrame = symbol.type === 'graphic'
+            ? frameIndex % Math.max(1, symbol.frameCount)
+            : (tick || 0) % Math.max(1, symbol.frameCount);
+          renderInto(node, symbol.layers, childFrame, tick, depth + 1);
+        }
+      }
+    }
+  }
+
+  function render(tick = 0) {
+    const doc = state.doc;
+    bgRect.width(doc.width);
+    bgRect.height(doc.height);
+    bgRect.fill(doc.backgroundColor);
+    contentLayer.destroyChildren();
+    renderInto(contentLayer, currentLayers(), state.currentFrame, tick, 0);
+    refreshSelectionVisuals();
+    refreshPointHandles();
+    contentLayer.draw();
+    overlayLayer.batchDraw();
+  }
+
+  function refreshSelectionVisuals() {
+    const nodes = state.selectedElementIds
+      .map((id) => contentLayer.findOne('#' + id))
+      .filter(Boolean);
+    transformer.nodes(state.playing ? [] : nodes);
+  }
+
+  // ----------------------------------------------------------- interaction
+  function attachInteraction(node, el) {
+    if (state.playing) return;
+    node.on('mousedown touchstart', (e) => {
+      if (state.currentTool === 'select') {
+        e.cancelBubble = true;
+        selectElement(el.id, el.layerId, e.evt.shiftKey);
+      } else if (state.currentTool === 'subselect') {
+        e.cancelBubble = true;
+        if (el.kind === 'shape' && (el.shapeType === 'path' || el.shapeType === 'line')) {
+          subselectId = el.id;
+          selectElement(el.id, el.layerId, false);
+          refreshPointHandles();
+          overlayLayer.batchDraw();
+        } else {
+          subselectId = null;
+          selectElement(el.id, el.layerId, false);
+        }
+      }
+    });
+    node.on('dblclick dbltap', (e) => {
+      if (el.kind === 'instance' && state.currentTool === 'select') {
+        e.cancelBubble = true;
+        state.editPath = [...state.editPath, el.symbolId];
+        state.selectedElementIds = [];
+        state.currentFrame = 0;
+        notify(state);
+      }
+    });
+    if (state.currentTool === 'select' && !isLocked(el.layerId)) {
+      node.draggable(true);
+      node.on('dragend', () => commitTransform(el.id, el.layerId, node));
+    }
+  }
+
+  function isLocked(layerId) {
+    const layer = currentLayers().find((l) => l.id === layerId);
+    return layer ? layer.locked : false;
+  }
+
+  // Sélectionner ne modifie pas le document : on ne doit JAMAIS reconstruire
+  // la scène (contentLayer.destroyChildren() + rebuild) pour ça, même avec
+  // un délai. Ce handler tourne pendant le mousedown qui sert aussi à Konva
+  // pour armer son propre glisser-déposer sur CE nœud précis ; si on détruit
+  // et remplace ce nœud par un autre pendant que le bouton reste enfoncé
+  // (un drag dure largement plus qu'une frame), Konva perd la référence sur
+  // laquelle il suit le geste et le déplacement s'arrête net. On se contente
+  // donc de rafraîchir les poignées du Transformer + prévenir les autres
+  // panneaux (propriétés, timeline) sans jamais toucher aux nœuds de forme.
+  function selectElement(id, layerId, additive) {
+    if (additive) {
+      const set = new Set(state.selectedElementIds);
+      set.has(id) ? set.delete(id) : set.add(id);
+      state.selectedElementIds = [...set];
+    } else {
+      state.selectedElementIds = [id];
+    }
+    state.selectedLayerId = layerId;
+    refreshSelectionVisuals();
+    overlayLayer.batchDraw();
+    onSelectionChange();
+  }
+
+  function commitTransform(id, layerId, node) {
+    const layer = currentLayers().find((l) => l.id === layerId);
+    if (!layer) return;
+    const kf = insertKeyframe(layer, state.currentFrame);
+    const el = kf.elements.find((e) => e.id === id);
+    if (!el) return;
+    el.x = node.x();
+    el.y = node.y();
+    el.rotation = node.rotation();
+    el.scaleX = node.scaleX();
+    el.scaleY = node.scaleY();
+    notify(state);
+  }
+
+  transformer.on('transformend', () => {
+    for (const node of transformer.nodes()) {
+      commitTransform(node.id(), node.getAttr('elLayerId'), node);
+    }
+  });
+
+  // --------------------------------------------- édition des points (plume)
+  // Même principe que la sélection : jamais de notify()/render() pendant un
+  // drag en cours, seulement au dragend. Les nœuds d'ancres/poignées sont
+  // reconstruits uniquement quand la sélection change ou après un commit.
+  function refreshPointHandles() {
+    handleGroup.destroyChildren();
+    pointRefs = [];
+    if (state.currentTool !== 'subselect' || !subselectId) return;
+    const node = contentLayer.findOne('#' + subselectId);
+    const elData = node && node.getAttr('elData');
+    if (!node || !elData) return;
+    buildPointHandles(node, elData);
+  }
+
+  function buildPointHandles(node, elData) {
+    const pts = elData.points;
+    const worldOf = (local) => node.getAbsoluteTransform().point(local);
+
+    pts.forEach((p, i) => {
+      const ref = {};
+      const anchorWorld = worldOf({ x: p.x, y: p.y });
+
+      if (p.cOut) {
+        const tip = worldOf({ x: p.x + p.cOut.x, y: p.y + p.cOut.y });
+        ref.outLine = new Konva.Line({ points: [anchorWorld.x, anchorWorld.y, tip.x, tip.y], stroke: '#f0a94f', strokeWidth: 1, listening: false });
+        ref.outCircle = new Konva.Circle({ x: tip.x, y: tip.y, radius: 4, fill: '#f0a94f', draggable: true });
+        handleGroup.add(ref.outLine, ref.outCircle);
+        ref.outCircle.on('dragmove', () => onHandleDrag(node, elData, i, 'cOut', ref));
+        ref.outCircle.on('dragend', () => commitPoints(node, elData));
+      }
+      if (p.cIn) {
+        const tip = worldOf({ x: p.x + p.cIn.x, y: p.y + p.cIn.y });
+        ref.inLine = new Konva.Line({ points: [anchorWorld.x, anchorWorld.y, tip.x, tip.y], stroke: '#f0a94f', strokeWidth: 1, listening: false });
+        ref.inCircle = new Konva.Circle({ x: tip.x, y: tip.y, radius: 4, fill: '#f0a94f', draggable: true });
+        handleGroup.add(ref.inLine, ref.inCircle);
+        ref.inCircle.on('dragmove', () => onHandleDrag(node, elData, i, 'cIn', ref));
+        ref.inCircle.on('dragend', () => commitPoints(node, elData));
+      }
+
+      ref.anchor = new Konva.Circle({
+        x: anchorWorld.x, y: anchorWorld.y, radius: 5,
+        fill: i === 0 ? '#ffcc00' : '#ffffff', stroke: '#cb4b16', strokeWidth: 2, draggable: true,
+      });
+      handleGroup.add(ref.anchor);
+      ref.anchor.on('dragmove', () => onAnchorDrag(node, elData, i, ref));
+      ref.anchor.on('dragend', () => commitPoints(node, elData));
+      pointRefs.push(ref);
+    });
+    overlayLayer.batchDraw();
+  }
+
+  function onAnchorDrag(node, elData, i, ref) {
+    const transform = node.getAbsoluteTransform();
+    const local = transform.copy().invert().point(ref.anchor.position());
+    const p = elData.points[i];
+    p.x = local.x;
+    p.y = local.y;
+    if (p.cOut && ref.outLine) {
+      const tip = transform.point({ x: p.x + p.cOut.x, y: p.y + p.cOut.y });
+      ref.outCircle.position(tip);
+      ref.outLine.points([ref.anchor.x(), ref.anchor.y(), tip.x, tip.y]);
+    }
+    if (p.cIn && ref.inLine) {
+      const tip = transform.point({ x: p.x + p.cIn.x, y: p.y + p.cIn.y });
+      ref.inCircle.position(tip);
+      ref.inLine.points([ref.anchor.x(), ref.anchor.y(), tip.x, tip.y]);
+    }
+    node.getLayer().batchDraw();
+    overlayLayer.batchDraw();
+  }
+
+  function onHandleDrag(node, elData, i, which, ref) {
+    const transform = node.getAbsoluteTransform();
+    const p = elData.points[i];
+    const circle = which === 'cOut' ? ref.outCircle : ref.inCircle;
+    const line = which === 'cOut' ? ref.outLine : ref.inLine;
+    const local = transform.copy().invert().point(circle.position());
+    const vec = { x: local.x - p.x, y: local.y - p.y };
+    p[which] = vec;
+    line.points([ref.anchor.x(), ref.anchor.y(), circle.x(), circle.y()]);
+
+    if (p.smooth) {
+      const other = which === 'cOut' ? 'cIn' : 'cOut';
+      p[other] = { x: -vec.x, y: -vec.y };
+      const otherCircle = which === 'cOut' ? ref.inCircle : ref.outCircle;
+      const otherLine = which === 'cOut' ? ref.inLine : ref.outLine;
+      if (otherCircle && otherLine) {
+        const otherTip = transform.point({ x: p.x + p[other].x, y: p.y + p[other].y });
+        otherCircle.position(otherTip);
+        otherLine.points([ref.anchor.x(), ref.anchor.y(), otherTip.x, otherTip.y]);
+      }
+    }
+    node.getLayer().batchDraw();
+    overlayLayer.batchDraw();
+  }
+
+  function commitPoints(node, elData) {
+    const layerId = node.getAttr('elLayerId');
+    const layer = currentLayers().find((l) => l.id === layerId);
+    if (!layer) return;
+    const kf = insertKeyframe(layer, state.currentFrame);
+    const target = kf.elements.find((e) => e.id === node.id());
+    if (!target) return;
+    target.points = elData.points.map(clonePathPoint);
+    notify(state);
+  }
+
+  // --------------------------------------------------------- drawing tools
+  function stagePointer() {
+    return konvaStage.getPointerPosition();
+  }
+
+  function distance(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  konvaStage.on('mousedown touchstart', (e) => {
+    const p = stagePointer();
+    if (!p) return;
+    const tool = state.currentTool;
+
+    if (tool === 'select' || tool === 'subselect') {
+      if (e.target === konvaStage) {
+        state.selectedElementIds = [];
+        if (tool === 'subselect') subselectId = null;
+        refreshSelectionVisuals();
+        refreshPointHandles();
+        overlayLayer.batchDraw();
+        onSelectionChange();
+      }
+      return;
+    }
+
+    if (tool === 'rect' || tool === 'ellipse' || tool === 'line') {
+      drawState = { tool, start: p, last: null };
+      let node;
+      if (tool === 'rect') node = new Konva.Rect({ x: p.x, y: p.y, width: 0, height: 0, stroke: state.strokeColor, strokeWidth: state.strokeWidth, fill: state.fillColor, dash: [4, 4], listening: false });
+      if (tool === 'ellipse') node = new Konva.Ellipse({ x: p.x, y: p.y, radiusX: 0, radiusY: 0, stroke: state.strokeColor, strokeWidth: state.strokeWidth, fill: state.fillColor, dash: [4, 4], listening: false });
+      if (tool === 'line') node = new Konva.Line({ points: [p.x, p.y, p.x, p.y], stroke: state.strokeColor, strokeWidth: state.strokeWidth, listening: false });
+      drawState.previewNode = node;
+      overlayLayer.add(node);
+      overlayLayer.draw();
+    } else if (tool === 'pen') {
+      startOrContinuePen(p);
+    } else if (tool === 'text') {
+      createTextAt(p);
+    }
+  });
+
+  function startOrContinuePen(p) {
+    if (drawState && drawState.tool === 'pen' && drawState.points.length > 1 && distance(p, drawState.points[0]) <= CLOSE_PATH_THRESHOLD) {
+      finishPen(true);
+      return;
+    }
+    const point = createPathPoint(p.x, p.y);
+    if (!drawState || drawState.tool !== 'pen') {
+      const curveNode = new Konva.Shape({
+        stroke: state.strokeColor, strokeWidth: state.strokeWidth, listening: false,
+        sceneFunc: (ctx, shape) => { ctx.beginPath(); tracePath(ctx, drawState.points, false); ctx.fillStrokeShape(shape); },
+      });
+      overlayLayer.add(curveNode);
+      drawState = { tool: 'pen', points: [point], previewNode: curveNode, dots: [], dragging: false, dragIndex: 0, handlePreview: null };
+    } else {
+      drawState.points.push(point);
+      drawState.dragIndex = drawState.points.length - 1;
+    }
+    drawState.dragging = true;
+    const dot = new Konva.Circle({ x: p.x, y: p.y, radius: 3.5, fill: '#ffffff', stroke: '#cb4b16', strokeWidth: 1.5, listening: false });
+    overlayLayer.add(dot);
+    drawState.dots.push(dot);
+    overlayLayer.batchDraw();
+  }
+
+  konvaStage.on('mousemove touchmove', () => {
+    if (!drawState) return;
+    const p = stagePointer();
+    if (!p) return;
+    if (drawState.tool === 'rect') {
+      const x = Math.min(p.x, drawState.start.x), y = Math.min(p.y, drawState.start.y);
+      const w = Math.abs(p.x - drawState.start.x), h = Math.abs(p.y - drawState.start.y);
+      drawState.previewNode.setAttrs({ x, y, width: w, height: h });
+      drawState.last = p;
+    } else if (drawState.tool === 'ellipse') {
+      const cx = (p.x + drawState.start.x) / 2, cy = (p.y + drawState.start.y) / 2;
+      drawState.previewNode.setAttrs({ x: cx, y: cy, radiusX: Math.abs(p.x - drawState.start.x) / 2, radiusY: Math.abs(p.y - drawState.start.y) / 2 });
+      drawState.last = p;
+    } else if (drawState.tool === 'line') {
+      drawState.previewNode.points([drawState.start.x, drawState.start.y, p.x, p.y]);
+      drawState.last = p;
+    } else if (drawState.tool === 'pen' && drawState.dragging) {
+      const point = drawState.points[drawState.dragIndex];
+      const start = { x: point.x, y: point.y };
+      if (distance(p, start) > HANDLE_DRAG_THRESHOLD) {
+        const vec = { x: p.x - start.x, y: p.y - start.y };
+        point.cOut = vec;
+        point.cIn = { x: -vec.x, y: -vec.y };
+        point.smooth = true;
+        if (!drawState.handlePreview) {
+          drawState.handlePreview = new Konva.Line({ stroke: '#f0a94f', strokeWidth: 1, listening: false });
+          overlayLayer.add(drawState.handlePreview);
+        }
+        drawState.handlePreview.points([start.x - vec.x, start.y - vec.y, start.x + vec.x, start.y + vec.y]);
+      }
+      drawState.previewNode.getLayer().batchDraw();
+    }
+    overlayLayer.batchDraw();
+  });
+
+  konvaStage.on('mouseup touchend', () => {
+    if (!drawState) return;
+    if (drawState.tool === 'pen') {
+      drawState.dragging = false;
+      return;
+    }
+    finishDrag();
+  });
+
+  konvaStage.on('dblclick dbltap', () => {
+    if (drawState && drawState.tool === 'pen') finishPen(false);
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (isTypingTarget(e.target)) return;
+    if (e.key === 'Enter' && drawState && drawState.tool === 'pen') finishPen(false);
+    if (e.key === 'Escape' && drawState && drawState.tool === 'pen') cancelDraw();
+    if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedElementIds.length) deleteSelected();
+  });
+
+  function isTypingTarget(target) {
+    return target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+  }
+
+  function finishDrag() {
+    const { tool, previewNode, last, start } = drawState;
+    previewNode.destroy();
+    overlayLayer.draw();
+    drawState = null;
+    if (!last) return;
+    let el = null;
+    if (tool === 'rect') {
+      const x = Math.min(last.x, start.x), y = Math.min(last.y, start.y);
+      const w = Math.abs(last.x - start.x), h = Math.abs(last.y - start.y);
+      if (w < 2 || h < 2) return;
+      el = createShape('rect', { x: x + w / 2, y: y + h / 2, width: w, height: h, fill: state.fillColor, stroke: state.strokeColor, strokeWidth: state.strokeWidth });
+    } else if (tool === 'ellipse') {
+      const w = Math.abs(last.x - start.x), h = Math.abs(last.y - start.y);
+      if (w < 2 || h < 2) return;
+      el = createShape('ellipse', { x: (start.x + last.x) / 2, y: (start.y + last.y) / 2, width: w, height: h, fill: state.fillColor, stroke: state.strokeColor, strokeWidth: state.strokeWidth });
+    } else if (tool === 'line') {
+      const dx = last.x - start.x, dy = last.y - start.y;
+      if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return;
+      el = createShape('line', { x: start.x, y: start.y, points: [createPathPoint(0, 0), createPathPoint(dx, dy)], stroke: state.strokeColor, strokeWidth: state.strokeWidth, width: Math.abs(dx), height: Math.abs(dy) });
+    }
+    if (el) addElement(el);
+  }
+
+  function finishPen(closeShape) {
+    if (!drawState || drawState.points.length < 2) { cancelDraw(); return; }
+    destroyPenPreview();
+    const pts = drawState.points;
+    const ox = pts[0].x, oy = pts[0].y;
+    const rel = pts.map((p) => createPathPoint(p.x - ox, p.y - oy, { cIn: p.cIn, cOut: p.cOut, smooth: p.smooth }));
+    const xs = rel.map((p) => p.x), ys = rel.map((p) => p.y);
+    const el = createShape('path', {
+      x: ox, y: oy, points: rel, closed: closeShape,
+      width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys),
+      fill: state.fillColor, stroke: state.strokeColor, strokeWidth: state.strokeWidth,
+    });
+    drawState = null;
+    addElement(el);
+  }
+
+  function cancelDraw() {
+    if (drawState && drawState.tool === 'pen') destroyPenPreview();
+    else if (drawState && drawState.previewNode) drawState.previewNode.destroy();
+    overlayLayer.draw();
+    drawState = null;
+  }
+
+  function destroyPenPreview() {
+    drawState.previewNode.destroy();
+    drawState.dots.forEach((d) => d.destroy());
+    if (drawState.handlePreview) drawState.handlePreview.destroy();
+    overlayLayer.draw();
+  }
+
+  function createTextAt(p) {
+    const el = createShape('text', { x: p.x, y: p.y, width: 160, height: 30, text: 'Texte', fill: state.fillColor, strokeWidth: 0 });
+    addElement(el);
+    state.currentTool = 'select';
+    state.selectedElementIds = [el.id];
+    notify(state);
+  }
+
+  function addElement(el) {
+    commitToActiveKeyframe((kf) => kf.elements.push(el));
+    state.selectedElementIds = [el.id];
+    notify(state);
+  }
+
+  function deleteSelected() {
+    const layer = activeLayer();
+    if (!layer) return;
+    const kf = insertKeyframe(layer, state.currentFrame);
+    kf.elements = kf.elements.filter((e) => !state.selectedElementIds.includes(e.id));
+    state.selectedElementIds = [];
+    notify(state);
+  }
+
+  function addInstanceAt(symbolId, p) {
+    const el = createInstance(symbolId, { x: p.x, y: p.y });
+    addElement(el);
+  }
+
+  function resize() {
+    konvaStage.width(state.doc.width);
+    konvaStage.height(state.doc.height);
+    render();
+  }
+
+  return { konvaStage, render, resize, addInstanceAt, deleteSelected };
+}

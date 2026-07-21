@@ -1,0 +1,11 @@
+ Bonne idée — mais je ne peux pas le faire moi-même à cet instant, je réponds ici sans accès à mes outils (pas de lecture/écriture de fichiers possible dans cette réponse ponctuelle).
+
+-le à l'agent principal dans ton prochain message (par exemple : « sauvegarde en mémoire les choix d'architecture du projet »), et il pourra ire dans le système de mémoire persistant les décisions structurantes déjà prises pour ce projet, entre autres :
+
+tack : JS vanilla (ES modules) + Vite comme bundler/dev server, Konva.js pour le rendu canvas de la scène
+odèle de données : objets JSON simples (pas de classes) — Document, Layer, Keyframe, Shape, Instance, Symbol — pour rester facilement ialisables et réutilisables par le runtime d'export
+tructure du projet : src/core (modèle), src/stage (Konva/outils), src/ui (toolbar, timeline, bibliothèque, propriétés), src/playback terpolation/tweening), src/export (génération HTML autonome)
+rincipe d'export : runtime JS vanilla autonome (sans dépendance Konva) généré séparément pour les fichiers exportés
+ - Compte-rendu voulu à la fin : un PDF de documentation (architecture, modèle, guide d'utilisation) pour ton usage
+
+      Ainsi, dans les sessions futures, l'agent pourra relire cette mémoire avant de continuer et rester cohérent avec ce qui a déjà été construit, sans repartir de zéro.
