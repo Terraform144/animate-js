@@ -13,7 +13,7 @@ const TOOLS = [
 
 const SHORTCUTS = { v: 'select', a: 'subselect', r: 'rect', o: 'ellipse', l: 'line', p: 'pen', t: 'text' };
 
-export function mountToolbar(container, state) {
+export function mountToolbar(container, state, { onDelete } = {}) {
   container.innerHTML = '';
 
   const buttons = {};
@@ -29,6 +29,17 @@ export function mountToolbar(container, state) {
     container.appendChild(btn);
     buttons[tool.id] = btn;
   }
+
+  // Bouton Delete (poubelle)
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'tool-btn';
+  deleteBtn.title = 'Supprimer (Suppr)';
+  deleteBtn.innerHTML = ICONS.trash;
+  deleteBtn.addEventListener('click', () => {
+    if (onDelete) onDelete();
+  });
+  container.appendChild(deleteBtn);
+  buttons.delete = deleteBtn;
 
   const colorRow = document.createElement('div');
   colorRow.className = 'tool-color-row';
@@ -60,6 +71,8 @@ export function mountToolbar(container, state) {
     }
     if (fillInput.value !== state.fillColor) fillInput.value = state.fillColor;
     if (strokeInput.value !== state.strokeColor) strokeInput.value = state.strokeColor;
+    // Désactiver le bouton delete s'il n'y a pas de sélection
+    deleteBtn.disabled = state.selectedElementIds.length === 0;
   }
 
   update();

@@ -4,10 +4,19 @@ import {
   removeKeyframe, toggleTween, getFrameLabels, getFrameLabel, setFrameLabel,
 } from '../core/model.js';
 import { notify } from '../state.js';
-import { getPref, setPref } from '../util/prefs.js';
+import { getPref, setPref, hasPref } from '../util/prefs.js';
 import { ICONS } from './icons.js';
+import { isTouchLike, isPhoneSize } from '../util/responsive.js';
 
 const CELL_W = 16;
+
+// Doit rester synchronisé avec .tl-layer-row / .tl-track-row dans style.css
+// (même seuil, via isTouchLike) — la hauteur de ligne y grossit pour le
+// doigt, donc les hauteurs calculées en JS (tracksBody, playhead) doivent
+// suivre la même bascule.
+function rowHeight() {
+  return isTouchLike() ? 34 : 24;
+}
 
 export function mountTimeline(container, state) {
   container.innerHTML = '';
@@ -39,7 +48,9 @@ export function mountTimeline(container, state) {
   frameInfo.className = 'frame-info';
 
   const btnCollapse = svgButton('chevronDown', 'Réduire / agrandir la timeline');
-  let collapsed = getPref('timelineCollapsed', false);
+  // Premier chargement (aucune préférence enregistrée) : repliée par défaut
+  // sur téléphone pour laisser un maximum de place à la scène.
+  let collapsed = hasPref('timelineCollapsed') ? getPref('timelineCollapsed', false) : isPhoneSize();
   function applyCollapsed() {
     container.classList.toggle('collapsed', collapsed);
     btnCollapse.innerHTML = ICONS[collapsed ? 'chevronRight' : 'chevronDown'];
@@ -241,7 +252,7 @@ export function mountTimeline(container, state) {
       tracksBody.appendChild(track);
     }
     tracksBody.style.width = n * CELL_W + 'px';
-    tracksBody.style.height = layers.length * 24 + 'px';
+    tracksBody.style.height = layers.length * rowHeight() + 'px';
   }
 
   function buildFrameCell(layer, index) {
@@ -274,7 +285,7 @@ export function mountTimeline(container, state) {
     buildRuler();
     buildLayersAndTracks();
     playhead.style.left = state.currentFrame * CELL_W + 'px';
-    playhead.style.height = layersInContext().length * 24 + 20 + 'px';
+    playhead.style.height = layersInContext().length * rowHeight() + 20 + 'px';
     btnPlay.innerHTML = ICONS[state.playing ? 'pause' : 'play'];
     frameInfo.textContent = `Image ${state.currentFrame + 1} / ${n} — ${state.doc.frameRate} i/s`;
 

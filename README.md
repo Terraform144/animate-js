@@ -5,9 +5,11 @@ en JavaScript vanilla (ES modules, sans framework UI). Konva.js est utilisé
 comme moteur de rendu Canvas 2D pour la scène ; le reste (état, timeline,
 bibliothèque, panneau de propriétés, export) est écrit à la main.
 
-Thème Solarisé clair (fond crème, texte quasi-noir adouci, un seul accent
-bleu) ; toutes les icônes de l'interface sont des SVG au trait dessinés à la
-main dans `src/ui/icons.js` (voir cette section plus bas).
+Thème Solarisé clair (fond crème, texte quasi-noir adouci, un seul accent —
+rouge-orange par défaut) ; toutes les icônes de l'interface sont des SVG au
+trait dessinés à la main dans `src/ui/icons.js` (voir cette section plus
+bas). Interface responsive : TV/desktop grand écran, tablette et
+smartphone (voir section dédiée plus bas).
 
 ## Démarrer
 
@@ -84,10 +86,40 @@ src/
   export/exportSymbol.js    export d'un symbole en classe JS réutilisable (objet de jeu)
   util/download.js          petit utilitaire de téléchargement de fichier texte
   util/prefs.js              petites préférences UI persistées (localStorage) : largeur/repli des panneaux
+  util/responsive.js         seuils responsive partagés entre le CSS et le JS (voir section Responsive)
   state.js                  état central + pub/sub
   history.js                 annuler/rétablir (15 niveaux)
   main.js                   assemblage de l'application
 ```
+
+## Responsive (TV, desktop, tablette, smartphone)
+
+- **Scène** : se met toujours à l'échelle de l'espace disponible via le
+  zoom natif de Konva (`stage.scale()`, jamais un `transform` CSS — ça
+  fausserait le calcul de position du pointeur). Ne grossit jamais au-delà
+  de 100 % : sur un très grand écran, c'est le confort de lecture du reste
+  de l'interface qui s'adapte, pas la taille de la scène elle-même.
+- **≤ 1024px** (tablette/mobile, seuil `OVERLAY_BREAKPOINT` dans
+  `util/responsive.js`) : le panneau latéral (bibliothèque + propriétés)
+  devient un tiroir en survol de la scène (fond cliquable pour le
+  refermer) au lieu de la pousser ; plus de glisser pour le redimensionner
+  dans ce mode, juste le bouton pour l'ouvrir/fermer.
+- **Doigt ou écran étroit** (`pointer: coarse` ou ≤ 1024px) : cibles
+  tactiles agrandies partout (outils, boutons d'icônes, lignes de calque,
+  champs), colonne d'outils élargie en conséquence.
+- **Premier chargement** (aucune préférence enregistrée) : panneau latéral
+  et timeline repliés par défaut sur mobile pour laisser la scène occuper
+  l'écran — dès que l'utilisateur touche à ces réglages, son choix prime
+  et reste mémorisé.
+- **≥ 1920px** (moniteur 4K, TV) : texte, icônes d'outils et largeur par
+  défaut du panneau latéral agrandis pour une lecture confortable à
+  distance ("10 pieds"). Pensé pour une TV pilotée comme un desktop
+  (souris/trackpad ou télécommande-pointeur type LG Magic Remote) — pas de
+  navigation clavier directionnel (D-pad) à l'aveugle, hors de portée pour
+  un outil qui repose sur le glisser-déposer précis (courbes Bézier,
+  poignées de sélection).
+- `touch-action: none` sur la scène : un doigt qui dessine ne déclenche
+  jamais le défilement/zoom natif de la page.
 
 ## Limites connues (v1)
 

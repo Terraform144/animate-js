@@ -366,8 +366,15 @@ export function createStage({ container, state, onSelectionChange = () => {} }) 
   }
 
   // --------------------------------------------------------- drawing tools
+  // getPointerPosition() renvoie des pixels écran bruts (relatifs au
+  // conteneur DOM) — ça ignore stage.scale() (le fitScale appliqué par
+  // resize() pour les petits écrans). Sur mobile, avec fitScale < 1, ça
+  // confinait tous les tracés (rect/ellipse/ligne/plume/texte) au quart
+  // haut-gauche du document. getRelativePointerPosition() inverse la
+  // transformation absolue du stage et renvoie la vraie position dans
+  // l'espace du document, quel que soit le zoom d'affichage.
   function stagePointer() {
-    return konvaStage.getPointerPosition();
+    return konvaStage.getRelativePointerPosition();
   }
 
   function distance(a, b) {
@@ -572,9 +579,24 @@ export function createStage({ container, state, onSelectionChange = () => {} }) 
     addElement(el);
   }
 
+  // Fait tenir la scène dans l'espace disponible (TV/desktop grand écran,
+  // tablette, mobile) en utilisant le zoom natif de Konva (stage.scale()) —
+  // jamais une transformation CSS externe, qui désynchroniserait le calcul
+  // de position du pointeur. Le calcul de position (stagePointer(), plus
+  // haut) doit utiliser getRelativePointerPosition() et non
+  // getPointerPosition() pour que ce zoom reste transparent aux outils de
+  // dessin — voir la mémoire projet sur le bug du quart haut-gauche mobile.
+  // Ne grossit jamais au-delà de 100% : sur un très grand écran, c'est la
+  // taille des contrôles autour qui s'adapte (voir style.css), pas la scène.
   function resize() {
-    konvaStage.width(state.doc.width);
-    konvaStage.height(state.doc.height);
+    const doc = state.doc;
+    const wrap = container.parentElement;
+    const availW = Math.max(80, (wrap ? wrap.clientWidth : doc.width) - 24);
+    const availH = Math.max(80, (wrap ? wrap.clientHeight : doc.height) - 24);
+    const fitScale = Math.min(1, availW / doc.width, availH / doc.height);
+    konvaStage.width(Math.round(doc.width * fitScale));
+    konvaStage.height(Math.round(doc.height * fitScale));
+    konvaStage.scale({ x: fitScale, y: fitScale });
     render();
   }
 

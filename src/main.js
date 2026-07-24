@@ -7,14 +7,11 @@ import { mountTimeline } from './ui/Timeline.js';
 import { mountLibraryPanel } from './ui/LibraryPanel.js';
 import { mountPropertiesPanel } from './ui/PropertiesPanel.js';
 import { mountMenuBar } from './ui/MenuBar.js';
-import { getPref, setPref } from './util/prefs.js';
+import { getPref, setPref, hasPref } from './util/prefs.js';
 import { ICONS } from './ui/icons.js';
+import { isNarrowViewport, isTouchLike, isPhoneSize, isLargeScreen } from './util/responsive.js';
 
 const doc = createDocument({ name: 'Sans titre' });
-// Un petit contenu de départ pour ne pas ouvrir sur une scène totalement vide.
-doc.layers[0].keyframes[0].elements.push(
-  createShape('rect', { x: doc.width / 2, y: doc.height / 2, width: 120, height: 90, fill: '#cb4b16', stroke: '#073642', strokeWidth: 3 }),
-);
 
 const state = createEditorState(doc);
 
@@ -27,7 +24,7 @@ const rawHistory = createHistory(state);
 // il y est référencé.
 let tick = 0;
 
-const toolbarCtl = mountToolbar(document.getElementById('toolbar'), state);
+// Créer timeline et properties d'abord (ils sont référencés dans onSelectionChange du stage)
 const timelineCtl = mountTimeline(document.getElementById('timeline'), state);
 const propertiesCtl = mountPropertiesPanel(document.getElementById('properties-panel'), state);
 
@@ -41,6 +38,10 @@ const stage = createStage({
     propertiesCtl.update();
     timelineCtl.update();
   },
+});
+
+const toolbarCtl = mountToolbar(document.getElementById('toolbar'), state, {
+  onDelete: stage.deleteSelected,
 });
 
 const banner = document.createElement('div');
@@ -89,6 +90,18 @@ function updateBanner() {
 // Le panneau bibliothèque, le panneau propriétés et tout futur panneau
 // empilé dans #sidebar partagent la même colonne de grille : élargir cette
 // colonne les élargit tous ensemble (voir Panel.js pour l'empilement).
+//
+// Sous ce seuil (tablette/mobile), le panneau ne pousse plus la scène : il
+// devient un tiroir en position fixe par-dessus, avec un fond cliquable
+// pour le refermer — plus de glisser-déposer pour le redimensionner dans ce
+// mode (peu fiable au doigt), juste le bouton pour l'ouvrir/fermer.
+const isOverlayMode = isNarrowViewport;
+function toolbarWidth() {
+  if (isTouchLike()) return 56;
+  if (isLargeScreen()) return 58; // TV/4K : contrôles plus grands, voir style.css
+  return 44;
+}
+
 const mainEl = document.getElementById('main');
 const sidebarEl = document.getElementById('sidebar');
 const sidebarResizer = document.getElementById('sidebar-resizer');
@@ -98,15 +111,31 @@ sidebarToggleBtn.id = 'sidebar-toggle-btn';
 sidebarToggleBtn.title = 'Afficher / masquer le panneau latéral';
 sidebarResizer.appendChild(sidebarToggleBtn);
 
+const sidebarBackdrop = document.createElement('div');
+sidebarBackdrop.id = 'sidebar-backdrop';
+sidebarBackdrop.addEventListener('click', () => {
+  sidebarCollapsed = true;
+  setPref('sidebarFullyCollapsed', true);
+  applySidebarCollapse();
+});
+document.body.appendChild(sidebarBackdrop);
+
 function applySidebarWidth(px) {
-  mainEl.style.gridTemplateColumns = `44px 1fr 5px ${px}px`;
+  const tb = toolbarWidth();
+  mainEl.style.gridTemplateColumns = isOverlayMode() ? `${tb}px 1fr 34px` : `${tb}px 1fr 5px ${px}px`;
 }
 
-let sidebarWidth = getPref('sidebarWidth', 260);
-let sidebarCollapsed = getPref('sidebarFullyCollapsed', false);
+let sidebarWidth = getPref('sidebarWidth', isLargeScreen() ? 320 : 260);
+// Premier chargement (aucune préférence enregistrée) : replié par défaut sur
+// mobile/tablette pour laisser la scène occuper tout l'écran — dès que
+// l'utilisateur touche au réglage, son choix est mémorisé et prime toujours.
+let sidebarCollapsed = hasPref('sidebarFullyCollapsed') ? getPref('sidebarFullyCollapsed', false) : isNarrowViewport();
 
 function applySidebarCollapse() {
+  const overlay = isOverlayMode();
+  sidebarEl.classList.toggle('overlay-mode', overlay);
   sidebarEl.style.display = sidebarCollapsed ? 'none' : '';
+  sidebarBackdrop.classList.toggle('visible', overlay && !sidebarCollapsed);
   applySidebarWidth(sidebarCollapsed ? 0 : sidebarWidth);
   sidebarToggleBtn.innerHTML = ICONS[sidebarCollapsed ? 'chevronLeft' : 'chevronRight'];
 }
@@ -121,7 +150,7 @@ sidebarToggleBtn.addEventListener('click', (e) => {
 
 let resizingSidebar = false;
 sidebarResizer.addEventListener('mousedown', (e) => {
-  if (e.target === sidebarToggleBtn || sidebarCollapsed) return;
+  if (e.target === sidebarToggleBtn || sidebarCollapsed || isOverlayMode()) return;
   resizingSidebar = true;
   sidebarResizer.classList.add('dragging');
   e.preventDefault();
@@ -131,12 +160,27 @@ window.addEventListener('mousemove', (e) => {
   const rect = mainEl.getBoundingClientRect();
   sidebarWidth = Math.max(200, Math.min(600, rect.right - e.clientX));
   applySidebarWidth(sidebarWidth);
+  stage.resize();
 });
 window.addEventListener('mouseup', () => {
   if (!resizingSidebar) return;
   resizingSidebar = false;
   sidebarResizer.classList.remove('dragging');
   setPref('sidebarWidth', sidebarWidth);
+});
+
+// La scène se met à l'échelle disponible (voir Stage.js#resize) : il faut
+// donc la recalculer à chaque redimensionnement de fenêtre, et réévaluer au
+// passage le mode tiroir/poussée du panneau latéral si on franchit le seuil.
+let resizeRaf = null;
+window.addEventListener('resize', () => {
+  if (resizeRaf) return;
+  resizeRaf = requestAnimationFrame(() => {
+    resizeRaf = null;
+    applySidebarCollapse();
+    stage.resize();
+    timelineCtl.update(); // la hauteur des lignes dépend du seuil tactile/étroit
+  });
 });
 
 function renderAll() {
@@ -151,6 +195,7 @@ function renderAll() {
 
 subscribe(state, renderAll);
 renderAll();
+stage.resize(); // ajuste l'échelle initiale de la scène à l'espace réellement disponible
 
 // ---------------------------------------------------------------- playback
 let lastTime = null;
