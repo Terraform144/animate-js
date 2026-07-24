@@ -3,8 +3,9 @@ import { notify } from '../state.js';
 import { downloadStandaloneHTML } from '../export/exportHTML.js';
 import { downloadTextFile } from '../util/download.js';
 import { ICONS } from './icons.js';
+import { parseSvg } from '../util/importSvg.js';
 
-export function mountMenuBar(container, state, { onDocReplaced, onStageResize, history }) {
+export function mountMenuBar(container, state, { onDocReplaced, onStageResize, history, onSvgImport = () => {} }) {
   container.innerHTML = '';
 
   const brand = document.createElement('span');
@@ -43,6 +44,31 @@ export function mountMenuBar(container, state, { onDocReplaced, onStageResize, h
       alert('Fichier invalide : ' + err.message);
     }
     fileInput.value = '';
+  });
+
+  // Bouton d'import SVG
+  const btnImportSvg = iconTextButton('importSvg', 'Importer SVG', () => svgFileInput.click());
+  const svgFileInput = document.createElement('input');
+  svgFileInput.type = 'file';
+  svgFileInput.accept = '.svg,image/svg+xml';
+  svgFileInput.style.display = 'none';
+  svgFileInput.addEventListener('change', async () => {
+    const file = svgFileInput.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const elements = parseSvg(text);
+      if (elements.length > 0) {
+        // Ajouter les éléments à la frame courante du calque actif
+        onSvgImport(elements);
+      } else {
+        alert('Aucun élément valide trouvé dans le SVG');
+      }
+    } catch (err) {
+      alert('Erreur lors de l\'import SVG : ' + err.message);
+    } finally {
+      svgFileInput.value = '';
+    }
   });
 
   const btnSave = iconTextButton('save', 'Enregistrer JSON', () => {
@@ -84,7 +110,7 @@ export function mountMenuBar(container, state, { onDocReplaced, onStageResize, h
   bgInput.addEventListener('input', () => { state.doc.backgroundColor = bgInput.value; notify(state); });
 
   container.append(
-    brand, btnUndo, btnRedo, btnNew, btnOpen, btnSave, btnExport, fileInput,
+    brand, btnUndo, btnRedo, btnNew, btnOpen, btnImportSvg, btnSave, btnExport, fileInput, svgFileInput,
     spacer,
     nameInput,
     wLabel, wInput, hLabel, hInput,

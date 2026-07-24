@@ -1,4 +1,4 @@
-import { createDocument, createShape, getContextFrameCount } from './core/model.js';
+import { createDocument, createShape, getContextFrameCount, nextId, insertKeyframe, getContextLayers } from './core/model.js';
 import { createEditorState, subscribe, notify } from './state.js';
 import { createHistory } from './history.js';
 import { createStage } from './stage/Stage.js';
@@ -73,6 +73,21 @@ const menuBarCtl = mountMenuBar(document.getElementById('menubar'), state, {
   onDocReplaced: () => {},
   onStageResize: () => stage.resize(),
   history,
+  onSvgImport: (elements) => {
+    // Trouver le calque actif
+    const layers = getContextLayers(state.doc, state.editPath);
+    const layer = layers.find((l) => l.id === state.selectedLayerId) || layers[layers.length - 1];
+    if (!layer || layer.locked) return;
+    const kf = insertKeyframe(layer, state.currentFrame);
+    // Ajouter tous les éléments importés
+    for (const el of elements) {
+      // S'assurer que chaque élément a un ID unique
+      if (!el.id) el.id = nextId('shape');
+      el.layerId = layer.id;
+      kf.elements.push(el);
+    }
+    notify(state);
+  },
 });
 
 function updateBanner() {

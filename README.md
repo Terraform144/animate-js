@@ -36,6 +36,9 @@ Ouvrir l'URL affichée (http://localhost:5173).
 - **Scène** : outils Sélection, Sous-sélection, Rectangle, Ellipse, Ligne,
   Plume, Texte. Déplacement / redimensionnement / rotation via poignées.
   Suppr pour effacer la sélection.
+- **Import SVG** : bouton "Importer SVG" dans la barre de menu pour importer des
+  fichiers vectoriels (.svg) et les convertir en formes éditables (rectangles,
+  ellipses, lignes, courbes, texte, polygones).
 - **Plume Bézier** : clic = point anguleux, clic-glissé = point lisse
   (poignées symétriques), clic près du premier point = fermer le tracé,
   Entrée/double-clic = terminer un tracé ouvert, Échap = annuler.
@@ -87,6 +90,7 @@ src/
   util/download.js          petit utilitaire de téléchargement de fichier texte
   util/prefs.js              petites préférences UI persistées (localStorage) : largeur/repli des panneaux
   util/responsive.js         seuils responsive partagés entre le CSS et le JS (voir section Responsive)
+  util/importSvg.js          import de fichiers SVG (conversion en formes Animate JS)
   state.js                  état central + pub/sub
   history.js                 annuler/rétablir (15 niveaux)
   main.js                   assemblage de l'application
@@ -126,7 +130,8 @@ src/
 - Pas d'undo/redo.
 - La rotation des rectangles/ellipses/texte pivote autour du centre ; les
   tracés (ligne/plume) pivotent autour de leur premier point.
-- Pas de dégradés, pas d'import d'images bitmap.
+- Pas de dégradés, pas d'import d'images bitmap (PNG/JPG).
+- Import SVG : les fichiers SVG sont convertis en formes vectorielles (rect, ellipse, line, path, text, polygon).
 - Le morphing apparie les points par index (1er avec 1er, 2e avec 2e, ...),
   pas de "shape hints" pour guider l'appariement comme dans Animate — deux
   courbes très différentes peuvent donc morpher de façon étrange.
