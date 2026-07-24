@@ -109,6 +109,55 @@
   - UI responsive (TV/desktop/tablette/smartphone).
 - **Limites** : Pas de zoom/pan, pas de dégradés, pas d'import d'images bitmap.
 
+---
+
+## 📅 **Session 4 - 24/07/2026**
+**Heure de début** : ~14:30 (heure locale)
+**Contexte** : Ajout de la fonctionnalité d'import SVG.
+
+### ✅ Actions réalisées
+1. **Nouveau module d'import SVG** (`src/util/importSvg.js`)
+   - `parseSvg(svgText, options)` : parse le texte SVG et retourne des éléments Animate JS
+   - Support des éléments : rect, circle, ellipse, line, path, text, polygon, polyline
+   - Support des groupes (`<g>`) avec parsing récursif
+   - Support des styles : fill, stroke, stroke-width, opacity, font-size, font-family
+   - Parsing des paths SVG : commandes M, L, H, V, C (move, line, horizontal, vertical, cubic bezier)
+   - Gestion des poignées de Bézier (cIn, cOut) pour les courbes
+
+2. **Nouvelle icône** (`src/ui/icons.js`)
+   - Ajout de l'icône `importSvg` pour le bouton d'import
+
+3. **Intégration dans la barre de menu** (`src/ui/MenuBar.js`)
+   - Ajout du bouton "Importer SVG" à côté de "Ouvrir…"
+   - Input file caché avec accept=".svg,image/svg+xml"
+   - Callback `onSvgImport` pour transmettre les éléments parsés
+
+4. **Intégration dans main.js**
+   - Passage du callback `onSvgImport` à mountMenuBar
+   - Ajout des éléments importés à la keyframe courante du calque actif
+   - Assignation des IDs uniques et layerId
+
+5. **Mise à jour de la documentation** (`README.md`)
+   - Ajout de l'import SVG dans la liste des fonctionnalités
+   - Mise à jour des limites connues
+
+### 📝 Fichiers modifiés
+| Fichier | Modifications |
+|---------|--------------|
+| `src/util/importSvg.js` | *Nouveau fichier* - module complet d'import SVG |
+| `src/ui/icons.js` | + icône `importSvg` |
+| `src/ui/MenuBar.js` | + import parseSvg, + bouton Importer SVG, + input file, + paramètre onSvgImport |
+| `src/main.js` | + imports, + callback onSvgImport |
+| `README.md` | + documentation import SVG |
+
+### 📌 Notes techniques
+- **Gestion des groupes** : Les éléments `<g>` sont aplatis
+- **Positionnement** : Centré sur le bounding box
+- **Couleurs** : Normalisation #RGB → #RRGGBB
+- **Paths complexes** : Commandes C converties en points avec cIn/cOut
+
+---
+
 ### 🎯 Prochaines étapes (à valider avec l'utilisateur)
 - [ ] Définir une tâche concrète (ex : ajouter une fonctionnalité, corriger un bug, optimiser un module).
 - [ ] Prioriser les axes de travail (ex : amélioration UI, export, outils de dessin).
