@@ -7,7 +7,7 @@
 
 ## 📅 **Session 3 - 24/07/2026**
 **Heure de début** : ~13:30 (heure locale)
-**Contexte** : Suppression du rectangle rouge par défaut.
+**Contexte** : Suppression du rectangle rouge par défaut + Implémentation complète du responsive design.
 
 ### ✅ Actions réalisées
 1. **Scène vide par défaut**
@@ -15,10 +15,43 @@
      - Suppression des lignes qui ajoutaient un rectangle rouge au démarrage.
      - Maintenant `createDocument({ name: 'Sans titre' })` crée une scène vide.
 
+2. **Implémentation complète du responsive design**
+   - **Nouveau fichier** : `src/util/responsive.js`
+     - Constantes : `OVERLAY_BREAKPOINT` (1024px), `PHONE_BREAKPOINT` (640px), `LARGE_SCREEN_BREAKPOINT` (1920px)
+     - Fonctions : `isNarrowViewport()`, `isTouchLike()`, `isPhoneSize()`, `isLargeScreen()`
+   - **Panneau latéral** : devient un tiroir overlay sur ≤1024px avec fond cliquable
+   - **Barre d'outils** : boutons agrandis (48px sur mobile, 42px sur 4K)
+   - **Scène** : utilise `stage.scale()` + `getRelativePointerPosition()` pour le zoom natif
+   - **Timeline** : lignes plus hautes sur tactile (34px), repliée par défaut sur téléphone
+   - **CSS** : media queries pour grands écrans (≥1920px, ≥2600px) et cibles tactiles
+   - **Documentation** : section "Responsive" ajoutée dans README.md
+
+3. **Bouton Delete dans la toolbar**
+   - Ajout du bouton poubelle utilisant l'icône `trash` existante
+   - Désactivé quand aucune sélection n'est active
+   - Intégration avec `stage.deleteSelected()`
+
+4. **Amélioration de prefs.js**
+   - Ajout de `hasPref()` pour distinguer "jamais réglé" de "réglé à false"
+   - Permet un comportement intelligent au premier chargement (ex. : replier la sidebar sur mobile)
+
+5. **Mise à jour de README.md**
+   - Correction : accent rouge-orange (pas bleu)
+   - Section "Responsive" complète avec tous les seuils et comportements
+   - Ajout de `responsive.js` dans la structure des fichiers
+
 ### 📝 Fichiers modifiés
 | Fichier | Modifications |
 |---------|--------------|
-| `src/main.js` | Suppression du rectangle rouge par défaut |
+| `src/main.js` | Suppression rectangle rouge, import responsive, gestion sidebar overlay, toolbar width dynamique |
+| `src/stage/Stage.js` | Passage à `getRelativePointerPosition()`, implémentation `resize()` avec fitScale |
+| `src/style.css` | Media queries grands écrans, styles overlay, cibles tactiles agrandies |
+| `src/ui/Timeline.js` | Import responsive, `rowHeight()` dynamique, repli par défaut sur phone |
+| `src/ui/Toolbar.js` | Ajout bouton delete avec callback `onDelete` |
+| `src/util/prefs.js` | Ajout fonction `hasPref()` |
+| `src/util/responsive.js` | *Nouveau fichier* - utilitaires de détection responsive |
+| `index.html` | Meta viewport amélioré (`maximum-scale=1.0, user-scalable=no`) |
+| `README.md` | Documentation responsive complète + corrections |
 
 ---
 
