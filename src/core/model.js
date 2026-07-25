@@ -167,6 +167,28 @@ export function removeKeyframe(layer, kf) {
   return true;
 }
 
+// Move an existing keyframe to a different frame index (glisser-déposer sur
+// la timeline). Un tween n'est jamais stocké comme un lien explicite vers
+// "l'autre" keyframe : c'est juste kf.tween + l'ordre du tableau (voir
+// getNextKeyframe/toggleTween) — le déplacement est donc refusé s'il
+// sauterait par-dessus une keyframe voisine (ce qui changerait l'ordre
+// relatif). En restant strictement entre ses deux voisines actuelles, tout
+// tween dont cette keyframe fait partie (comme départ ou comme arrivée)
+// reste automatiquement intact, seule la durée du tween change.
+export function moveKeyframe(layer, kf, targetIndex) {
+  if (targetIndex === kf.index) return true;
+  if (targetIndex < 0) return false;
+  if (getKeyframeAt(layer, targetIndex)) return false; // index déjà occupé
+  const idx = layer.keyframes.indexOf(kf);
+  const prev = layer.keyframes[idx - 1];
+  const next = layer.keyframes[idx + 1];
+  if (prev && targetIndex <= prev.index) return false;
+  if (next && targetIndex >= next.index) return false;
+  kf.index = targetIndex;
+  sortKeyframes(layer);
+  return true;
+}
+
 export function toggleTween(layer, kf) {
   const next = getNextKeyframe(layer, kf);
   if (!next) { kf.tween = null; return; }

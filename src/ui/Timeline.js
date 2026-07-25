@@ -1,7 +1,7 @@
 import {
   createLayer, getContextLayers, getContextFrameCount, setContextFrameCount,
   getKeyframeAt, getActiveKeyframe, getNextKeyframe, insertKeyframe, insertBlankKeyframe,
-  removeKeyframe, toggleTween, getFrameLabels, getFrameLabel, setFrameLabel,
+  removeKeyframe, moveKeyframe, toggleTween, getFrameLabels, getFrameLabel, setFrameLabel,
 } from '../core/model.js';
 import { notify } from '../state.js';
 import { getPref, setPref, hasPref } from '../util/prefs.js';
@@ -94,6 +94,61 @@ export function mountTimeline(container, state) {
 
   let scrubbing = false;
   window.addEventListener('mouseup', () => { scrubbing = false; });
+
+  // ----------------------------------------------- glisser-déposer des clés
+  // Déplace une keyframe existante le long de sa piste. Les tweens ne sont
+  // jamais un lien explicite vers "l'autre" keyframe (juste kf.tween + l'ordre
+  // du tableau, voir moveKeyframe() dans core/model.js) : on interdit donc de
+  // sauter par-dessus une keyframe voisine pendant le glissé, ce qui garantit
+  // que les tweens en cours restent intacts (seule leur durée peut changer).
+  let keyDrag = null; // { layer, kf, startIndex, startX, targetIndex, cell, track, minIndex, maxIndex }
+
+  function startKeyDrag(e, layer, kf, index, cell) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const arr = layer.keyframes;
+    const idx = arr.indexOf(kf);
+    const prev = arr[idx - 1];
+    const next = arr[idx + 1];
+    keyDrag = {
+      layer, kf, startIndex: index, startX: e.clientX, targetIndex: index,
+      cell, track: cell.parentElement,
+      minIndex: prev ? prev.index + 1 : 0,
+      maxIndex: next ? next.index - 1 : frameCount() - 1,
+    };
+    window.addEventListener('pointermove', onKeyDragMove);
+    window.addEventListener('pointerup', onKeyDragEnd, { once: true });
+  }
+
+  function onKeyDragMove(e) {
+    if (!keyDrag) return;
+    const dxFrames = Math.round((e.clientX - keyDrag.startX) / CELL_W);
+    const target = Math.max(0, Math.min(frameCount() - 1, keyDrag.startIndex + dxFrames));
+    if (target === keyDrag.targetIndex) return;
+    keyDrag.targetIndex = target;
+    const { track, startIndex, cell, minIndex, maxIndex } = keyDrag;
+    cell.style.transform = `translateX(${(target - startIndex) * CELL_W}px)`;
+    cell.classList.add('dragging-key');
+    Array.from(track.children).forEach((c) => c.classList.remove('drop-target', 'drop-invalid'));
+    if (target !== startIndex) {
+      const targetCell = track.children[target];
+      if (targetCell) targetCell.classList.add(target >= minIndex && target <= maxIndex ? 'drop-target' : 'drop-invalid');
+    }
+  }
+
+  function onKeyDragEnd() {
+    window.removeEventListener('pointermove', onKeyDragMove);
+    if (!keyDrag) return;
+    const { layer, kf, startIndex, targetIndex, cell, track } = keyDrag;
+    keyDrag = null;
+    cell.style.transform = '';
+    cell.classList.remove('dragging-key');
+    Array.from(track.children).forEach((c) => c.classList.remove('drop-target', 'drop-invalid'));
+
+    state.selectedLayerId = layer.id;
+    state.currentFrame = (targetIndex !== startIndex && moveKeyframe(layer, kf, targetIndex)) ? targetIndex : startIndex;
+    notify(state);
+  }
 
   let syncing = false;
   layersCol.addEventListener('scroll', () => {
@@ -281,10 +336,16 @@ export function mountTimeline(container, state) {
     }
     if (kf) cell.classList.add(kf.elements.length ? 'keyframe' : 'blank-keyframe');
     if (layer.id === state.selectedLayerId && index === state.currentFrame) cell.classList.add('selected');
-    cell.addEventListener('click', () => {
-      state.selectedLayerId = layer.id;
-      state.currentFrame = index;
-      notify(state);
+    if (kf && !layer.locked) cell.classList.add('draggable-key');
+    cell.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      if (kf && !layer.locked) {
+        startKeyDrag(e, layer, kf, index, cell);
+      } else {
+        state.selectedLayerId = layer.id;
+        state.currentFrame = index;
+        notify(state);
+      }
     });
     return cell;
   }

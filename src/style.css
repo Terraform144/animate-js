@@ -520,6 +520,11 @@ html, body {
   background: transparent;
 }
 .tl-frame-cell.selected { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* Glisser-déposer d'une keyframe le long de sa piste (voir Timeline.js) */
+.tl-frame-cell.draggable-key { cursor: grab; touch-action: none; }
+.tl-frame-cell.dragging-key { cursor: grabbing; z-index: 4; opacity: 0.85; }
+.tl-frame-cell.drop-target { background: var(--accent-dim); outline: 1px dashed var(--accent); outline-offset: -1px; }
+.tl-frame-cell.drop-invalid { background: rgba(220, 50, 47, 0.18); outline: 1px dashed var(--danger); outline-offset: -1px; }
 .tl-frame-cell.tween-arrow-end::before {
   content: "▶";
   position: absolute;
