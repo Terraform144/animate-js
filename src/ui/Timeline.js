@@ -7,6 +7,7 @@ import { notify } from '../state.js';
 import { getPref, setPref, hasPref } from '../util/prefs.js';
 import { ICONS } from './icons.js';
 import { isTouchLike, isPhoneSize } from '../util/responsive.js';
+import { enableDragScroll } from '../util/dragScroll.js';
 
 const CELL_W = 16;
 
@@ -63,6 +64,7 @@ export function mountTimeline(container, state) {
   applyCollapsed();
 
   toolbar.append(btnAddLayer, btnDelLayer, sep(), btnKeyframe, btnBlank, btnTween, btnRemoveKf, sep(), labelInput, sep(), btnPlay, frameInfo, btnCollapse);
+  enableDragScroll(toolbar);
 
   const body = document.createElement('div');
   body.className = 'tl-body';
@@ -165,7 +167,14 @@ export function mountTimeline(container, state) {
   btnRemoveKf.addEventListener('click', () => {
     const layer = editableLayer();
     if (!layer) return;
-    const kf = getKeyframeAt(layer, state.currentFrame);
+    // getKeyframeAt() ne trouve que les images qui SONT elles-mêmes une
+    // keyframe explicite : sur une image "tenue" (fantôme, entre deux clés)
+    // elle renvoyait null et le bouton ne faisait alors rien, sans que rien
+    // ne le signale — d'où l'impression que "x" n'efface pas toujours.
+    // getActiveKeyframe() résout systématiquement vers la clé qui gouverne
+    // réellement le contenu affiché à la tête de lecture (pleine ou vide),
+    // qu'on soit pile dessus ou sur une image tenue après elle.
+    const kf = getActiveKeyframe(layer, state.currentFrame);
     if (kf && removeKeyframe(layer, kf)) notify(state);
   });
   btnPlay.addEventListener('click', () => {
@@ -296,7 +305,10 @@ export function mountTimeline(container, state) {
     btnTween.disabled = locked;
     btnKeyframe.disabled = locked;
     btnBlank.disabled = locked;
-    btnRemoveKf.disabled = locked;
+    // Un calque ne peut jamais se retrouver sans aucune keyframe : rien à
+    // effacer s'il n'en reste qu'une seule (le cas normal en dehors de ça est
+    // couvert par getActiveKeyframe() dans le handler, toujours resolvable).
+    btnRemoveKf.disabled = locked || (layer && layer.keyframes.length <= 1);
     btnDelLayer.disabled = layersInContext().length <= 1;
 
     const currentLabel = getFrameLabel(state.doc, state.editPath, state.currentFrame);

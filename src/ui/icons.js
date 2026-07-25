@@ -21,6 +21,7 @@ export const ICONS = {
   trash: svg('<rect x="6" y="7" width="12" height="13" rx="1.5"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M10 11v6M14 11v6"/>'),
   tween: svg('<path d="M3 12h6M9 12 6.5 9.5M9 12 6.5 14.5"/><path d="M21 12h-6M15 12l2.5-2.5M15 12l2.5 2.5"/>'),
   close: svg('<path d="M6 6l12 12M18 6 6 18"/>'),
+  check: svg('<path d="M5 12.5 10 17.5 19 7"/>'),
   play: svg('<path d="M8 5l11 7-11 7Z" fill="currentColor" stroke="none"/>'),
   pause: svg('<path d="M8 5v14M16 5v14"/>'),
   chevronDown: svg('<path d="M6 9l6 6 6-6"/>'),

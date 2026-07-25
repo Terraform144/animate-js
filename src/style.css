@@ -102,6 +102,12 @@ html, body {
 #menubar label { color: var(--text-dim); margin-left: 6px; font-size: 12px; flex: none; }
 #menubar input[type="text"] { flex: none; }
 
+/* Cliquer-glisser souris pour les barres qui débordent horizontalement — voir
+   util/dragScroll.js (nécessaire sur mobile quand une souris est connectée :
+   pas de tactile pour le scroll natif, pas de molette horizontale). */
+.drag-scroll { cursor: grab; }
+.drag-scroll:active { cursor: grabbing; }
+
 /* ---------- Main layout ---------- */
 #main {
   display: grid;
@@ -236,6 +242,35 @@ html, body {
   font-size: 12px;
   cursor: pointer;
   z-index: 5;
+}
+
+/* Boutons flottants Valider/Annuler pour l'outil plume — indispensables sur
+   mobile, où il n'y a pas de clavier pour Entrée/Échap (voir Stage.js). */
+#stage-wrap .pen-actions {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  z-index: 6;
+}
+.pen-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(7, 54, 66, 0.25);
+}
+.pen-action-btn.pen-confirm { background: var(--accent); color: #fff; border-color: var(--accent); }
+.pen-action-btn.pen-confirm:disabled { opacity: 0.4; cursor: default; }
+.pen-action-btn.pen-cancel { background: var(--bg-2); color: var(--text); }
+@media (pointer: coarse), (max-width: 1024px) {
+  .pen-action-btn { padding: 10px 18px; font-size: 14px; }
 }
 
 /* ---------- Sidebar : pile de panneaux réductibles, largeur partagée ---------- */

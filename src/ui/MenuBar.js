@@ -4,6 +4,7 @@ import { downloadStandaloneHTML } from '../export/exportHTML.js';
 import { downloadTextFile } from '../util/download.js';
 import { ICONS } from './icons.js';
 import { parseSvg } from '../util/importSvg.js';
+import { enableDragScroll } from '../util/dragScroll.js';
 
 export function mountMenuBar(container, state, { onDocReplaced, onStageResize, history, onSvgImport = () => {} }) {
   container.innerHTML = '';
@@ -117,6 +118,7 @@ export function mountMenuBar(container, state, { onDocReplaced, onStageResize, h
     fpsLabel, fpsInput, framesLabel, framesInput,
     bgLabel, bgInput,
   );
+  enableDragScroll(container);
 
   function resetDocument(newDoc) {
     state.doc = newDoc;

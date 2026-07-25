@@ -2,6 +2,7 @@ import Konva from 'konva';
 import { getContextLayers, insertKeyframe, createShape, createInstance, createPathPoint } from '../core/model.js';
 import { resolveLayersAtFrame } from '../playback/resolve.js';
 import { notify } from '../state.js';
+import { ICONS } from '../ui/icons.js';
 
 const HANDLE_DRAG_THRESHOLD = 3; // px, avant qu'un clic-glissé plume ne devienne un point lisse
 const CLOSE_PATH_THRESHOLD = 8; // px, distance au premier point pour fermer le tracé au clic
@@ -60,7 +61,35 @@ export function createStage({ container, state, onSelectionChange = () => {} }) 
   const handleGroup = new Konva.Group();
   overlayLayer.add(transformer, handleGroup);
 
+  // Boutons flottants Valider/Annuler pour l'outil plume : sur mobile, sans
+  // clavier, Entrée/Échap (voir plus bas) sont inaccessibles — sans ce
+  // bouton, un tracé plume commencé au doigt ne pouvait jamais être terminé.
+  const penActions = document.createElement('div');
+  penActions.className = 'pen-actions';
+  penActions.style.display = 'none';
+  const btnPenCancel = document.createElement('button');
+  btnPenCancel.type = 'button';
+  btnPenCancel.className = 'pen-action-btn pen-cancel';
+  btnPenCancel.title = 'Annuler le tracé (Échap)';
+  btnPenCancel.innerHTML = ICONS.close + '<span>Annuler</span>';
+  btnPenCancel.addEventListener('click', () => cancelDraw());
+  const btnPenConfirm = document.createElement('button');
+  btnPenConfirm.type = 'button';
+  btnPenConfirm.className = 'pen-action-btn pen-confirm';
+  btnPenConfirm.title = 'Valider la forme (Entrée)';
+  btnPenConfirm.innerHTML = ICONS.check + '<span>Valider</span>';
+  btnPenConfirm.addEventListener('click', () => finishPen(false));
+  penActions.append(btnPenCancel, btnPenConfirm);
+  container.parentElement.appendChild(penActions);
+
+  function updatePenActions() {
+    const active = !!(drawState && drawState.tool === 'pen');
+    penActions.style.display = active ? 'flex' : 'none';
+    if (active) btnPenConfirm.disabled = drawState.points.length < 2;
+  }
+
   let drawState = null;
+  let marquee = null; // { start, node, additive } — sélection rectangulaire en cours (outil sélection)
   let subselectId = null; // id de l'élément path/line actuellement édité par l'outil sous-sélection
   let pointRefs = []; // nœuds Konva des ancres/poignées affichées, reconstruits à chaque sélection
 
@@ -115,6 +144,18 @@ export function createStage({ container, state, onSelectionChange = () => {} }) 
             },
           });
           node.setAttr('elData', elData);
+          // Konva.Shape générique : getSelfRect() par défaut se base sur les
+          // attrs width/height (jamais renseignés ici) et renverrait une
+          // boîte nulle — inutilisable pour le cadre de sélection (marquee)
+          // ou le Transformer. On la recalcule depuis les points réels.
+          node.getSelfRect = function () {
+            const pts = elData.points;
+            if (!pts.length) return { x: 0, y: 0, width: 0, height: 0 };
+            const xs = pts.map((pt) => pt.x), ys = pts.map((pt) => pt.y);
+            const minX = Math.min(...xs), maxX = Math.max(...xs);
+            const minY = Math.min(...ys), maxY = Math.max(...ys);
+            return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+          };
           break;
         }
         case 'text':
@@ -156,6 +197,9 @@ export function createStage({ container, state, onSelectionChange = () => {} }) 
   }
 
   function render(tick = 0) {
+    // Changer d'outil en pleine plume abandonnait un tracé fantôme (aperçu
+    // jamais détruit, drawState jamais nettoyé) — on l'annule proprement.
+    if (drawState && drawState.tool === 'pen' && state.currentTool !== 'pen') cancelDraw();
     const doc = state.doc;
     bgRect.width(doc.width);
     bgRect.height(doc.height);
@@ -388,10 +432,29 @@ export function createStage({ container, state, onSelectionChange = () => {} }) 
 
     if (tool === 'select' || tool === 'subselect') {
       if (e.target === konvaStage) {
-        state.selectedElementIds = [];
-        if (tool === 'subselect') subselectId = null;
+        if (tool === 'subselect') {
+          state.selectedElementIds = [];
+          subselectId = null;
+          refreshSelectionVisuals();
+          refreshPointHandles();
+          overlayLayer.batchDraw();
+          onSelectionChange();
+          return;
+        }
+        // Clic sur le vide avec l'outil sélection : démarre un cadre de
+        // sélection en liseret pointillé (comme Animate/Flash) — le clic
+        // simple (sans glissé, voir finishMarquee) garde l'effet de "vider
+        // la sélection" d'origine.
+        const additive = e.evt.shiftKey;
+        if (!additive) state.selectedElementIds = [];
+        const rectNode = new Konva.Rect({
+          x: p.x, y: p.y, width: 0, height: 0,
+          stroke: '#cb4b16', strokeWidth: 1, dash: [4, 4],
+          fill: 'rgba(203, 75, 22, 0.08)', listening: false,
+        });
+        overlayLayer.add(rectNode);
+        marquee = { start: p, node: rectNode, additive };
         refreshSelectionVisuals();
-        refreshPointHandles();
         overlayLayer.batchDraw();
         onSelectionChange();
       }
@@ -435,10 +498,20 @@ export function createStage({ container, state, onSelectionChange = () => {} }) 
     const dot = new Konva.Circle({ x: p.x, y: p.y, radius: 3.5, fill: '#ffffff', stroke: '#cb4b16', strokeWidth: 1.5, listening: false });
     overlayLayer.add(dot);
     drawState.dots.push(dot);
+    updatePenActions();
     overlayLayer.batchDraw();
   }
 
   konvaStage.on('mousemove touchmove', () => {
+    if (marquee) {
+      const p = stagePointer();
+      if (!p) return;
+      const x = Math.min(p.x, marquee.start.x), y = Math.min(p.y, marquee.start.y);
+      const w = Math.abs(p.x - marquee.start.x), h = Math.abs(p.y - marquee.start.y);
+      marquee.node.setAttrs({ x, y, width: w, height: h });
+      overlayLayer.batchDraw();
+      return;
+    }
     if (!drawState) return;
     const p = stagePointer();
     if (!p) return;
@@ -474,6 +547,7 @@ export function createStage({ container, state, onSelectionChange = () => {} }) 
   });
 
   konvaStage.on('mouseup touchend', () => {
+    if (marquee) { finishMarquee(); return; }
     if (!drawState) return;
     if (drawState.tool === 'pen') {
       drawState.dragging = false;
@@ -481,6 +555,46 @@ export function createStage({ container, state, onSelectionChange = () => {} }) 
     }
     finishDrag();
   });
+
+  // Filet de sécurité si le bouton est relâché hors de la scène (l'événement
+  // Konva ne se déclenche alors pas) — même principe que le redimensionnement
+  // du panneau latéral dans main.js.
+  window.addEventListener('mouseup', () => { if (marquee) finishMarquee(); });
+
+  const MARQUEE_CLICK_THRESHOLD = 3; // px, en dessous duquel on considère que c'était un simple clic (pas un glissé)
+
+  function finishMarquee() {
+    const { start, node, additive } = marquee;
+    const end = stagePointer() || start;
+    node.destroy();
+    marquee = null;
+
+    const x1 = Math.min(start.x, end.x), x2 = Math.max(start.x, end.x);
+    const y1 = Math.min(start.y, end.y), y2 = Math.max(start.y, end.y);
+    if (x2 - x1 >= MARQUEE_CLICK_THRESHOLD || y2 - y1 >= MARQUEE_CLICK_THRESHOLD) {
+      const hitIds = [];
+      contentLayer.children.forEach((node2) => {
+        if (isLocked(node2.getAttr('elLayerId'))) return;
+        const r = node2.getClientRect({ relativeTo: contentLayer });
+        const intersects = r.x < x2 && r.x + r.width > x1 && r.y < y2 && r.y + r.height > y1;
+        if (intersects) hitIds.push(node2.id());
+      });
+      if (hitIds.length) {
+        if (additive) {
+          const set = new Set(state.selectedElementIds);
+          hitIds.forEach((id) => set.add(id));
+          state.selectedElementIds = [...set];
+        } else {
+          state.selectedElementIds = hitIds;
+        }
+        const lastNode = contentLayer.findOne('#' + hitIds[hitIds.length - 1]);
+        if (lastNode) state.selectedLayerId = lastNode.getAttr('elLayerId');
+      }
+    }
+    refreshSelectionVisuals();
+    overlayLayer.batchDraw();
+    onSelectionChange();
+  }
 
   konvaStage.on('dblclick dbltap', () => {
     if (drawState && drawState.tool === 'pen') finishPen(false);
@@ -534,6 +648,7 @@ export function createStage({ container, state, onSelectionChange = () => {} }) 
       fill: state.fillColor, stroke: state.strokeColor, strokeWidth: state.strokeWidth,
     });
     drawState = null;
+    updatePenActions();
     addElement(el);
   }
 
@@ -542,6 +657,7 @@ export function createStage({ container, state, onSelectionChange = () => {} }) 
     else if (drawState && drawState.previewNode) drawState.previewNode.destroy();
     overlayLayer.draw();
     drawState = null;
+    updatePenActions();
   }
 
   function destroyPenPreview() {
