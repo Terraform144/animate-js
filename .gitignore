@@ -1,3 +1,4 @@
 node_modules/
 dist/
 .ionos_ssh_info.txt
+gameTest/
